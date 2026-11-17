@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+.wake-up-brain/
+/guide.html

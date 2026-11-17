@@ -1,0 +1,102 @@
+{
+  "title": "하나의 작업을 여러 워커 설정으로 나누기",
+  "summary": "작업 하나를 직접 실행하던 함수에 이름과 분할 수를 가진 설정을 붙이고, 설정별 결과를 모으는 학습 예시입니다. 실제 코드는 순차 실행이며 스레드·비동기 병렬 처리는 하지 않습니다.",
+  "provenance": "새로 작성한 실행 가능한 합성 Python 예시. parallelism은 이 교재에서 분할 개수를 뜻하는 이름이며 동시 실행을 보장하지 않습니다.",
+  "steps": [
+    {
+      "id": "single-job",
+      "title": "하나의 작업을 그대로 실행한다",
+      "source": {"path": "examples/worker_demo.py", "line": 1, "end_line": 2},
+      "code": "def run_once(job: str) -> str:\n    return f\"completed: {job}\"",
+      "language": "python",
+      "explanation": [
+        "처음에는 작업 문자열 하나를 받아 결과 문자열 하나를 돌려주면 충분합니다.",
+        "이 함수는 실제 일을 하는 가장 작은 단위로 남겨 둡니다. 나중에 워커가 늘어도 작업의 의미를 여러 곳에서 다시 구현하지 않습니다."
+      ],
+      "inputs": ["job: 처리할 작업 이름 하나"],
+      "outputs": ["completed: 로 시작하는 완료 문자열 하나"],
+      "question": {
+        "prompt": "run_once(\"report\")는 어떤 문자열을 돌려줄까요?",
+        "hint": "f-string 안에서 job 자리에 인수가 들어갑니다.",
+        "answer": "completed: report를 돌려줍니다. 아직은 워커 수나 분할 개념이 전혀 없습니다.",
+        "transfer": "파일 업로드나 이미지 변환처럼 실제 부수 효과가 있는 작업도 먼저 이 작은 단위로 분리해 보세요."
+      }
+    },
+    {
+      "id": "named-configs",
+      "title": "워커마다 읽기 쉬운 설정을 붙인다",
+      "source": {"path": "examples/worker_demo.py", "line": 4, "end_line": 14},
+      "code": "from dataclasses import dataclass\n\n@dataclass(frozen=True)\nclass WorkerConfig:\n    name: str\n    parallelism: int\n\nWORKERS = (\n    WorkerConfig(\"careful\", 1),\n    WorkerConfig(\"fast\", 3),\n)",
+      "language": "python",
+      "explanation": [
+        "숫자만 있는 workers = 3은 왜 세 개인지, 다른 실행 방식과 어떻게 구분되는지 알려 주지 않습니다.",
+        "불변 dataclass로 이름과 분할 수를 함께 기록하면 호출하는 쪽이 fast 설정의 세 분할을 선택했다는 사실을 읽을 수 있습니다. 이름은 fast지만 실제 속도가 더 빠르다는 측정이나 병렬 실행 구현은 없습니다."
+      ],
+      "inputs": ["name: 설정을 설명하는 이름", "parallelism: 이 예시에서 만들 분할 수"],
+      "outputs": ["선택할 수 있는 WorkerConfig 튜플"],
+      "question": {
+        "prompt": "frozen=True를 붙인 WorkerConfig의 parallelism을 만든 뒤 바꾸려 하면 어떻게 될까요?",
+        "hint": "frozen dataclass는 인스턴스 필드 재대입을 막습니다.",
+        "answer": "FrozenInstanceError가 납니다. 실행 중 공유 설정이 바뀌어 서로 다른 워커가 다른 계획을 보는 실수를 막는 데 도움이 됩니다.",
+        "transfer": "환경별 설정에도 이름과 값이 함께 있는 작은 불변 객체가 숫자나 문자열만 나열한 목록보다 안전한지 비교해 보세요."
+      }
+    },
+    {
+      "id": "split-work",
+      "title": "작업 이름에 분할 번호를 붙인다",
+      "source": {"path": "examples/worker_demo.py", "line": 16, "end_line": 19},
+      "code": "def split_job(job: str, parallelism: int) -> list[str]:\n    if parallelism < 1:\n        raise ValueError(\"parallelism must be positive\")\n    return [f\"{job} [part {index}]\" for index in range(1, parallelism + 1)]",
+      "language": "python",
+      "explanation": [
+        "parallelism이 0이나 음수이면 range가 조용히 빈 결과를 만들 수 있으므로, 경계에서 즉시 거부합니다.",
+        "range의 끝은 포함되지 않기 때문에 1부터 parallelism + 1까지 사용해 사람이 읽는 part 1부터 마지막 part까지 만듭니다."
+      ],
+      "inputs": ["job: 원래 작업 이름", "parallelism: 1 이상의 분할 수"],
+      "outputs": ["분할 번호가 붙은 작업 이름 목록"],
+      "question": {
+        "prompt": "split_job(\"report\", 3)은 몇 개의 항목을 만들고 마지막 항목은 무엇일까요?",
+        "hint": "range(1, 4)는 1, 2, 3을 만듭니다.",
+        "answer": "세 항목을 만들고 마지막은 report [part 3]입니다. parallelism이 0이면 목록 대신 ValueError를 냅니다.",
+        "transfer": "페이지 번호나 배치 번호처럼 외부 사용자에게 보이는 번호가 1부터 시작해야 하는 다른 반복문도 점검해 보세요."
+      }
+    },
+    {
+      "id": "run-selected-workers",
+      "title": "선택한 설정마다 같은 단위 작업을 실행한다",
+      "source": {"path": "examples/worker_demo.py", "line": 21, "end_line": 25},
+      "code": "def run_all(job: str, configs: tuple[WorkerConfig, ...]) -> dict[str, list[str]]:\n    return {\n        config.name: [run_once(part) for part in split_job(job, config.parallelism)]\n        for config in configs\n    }",
+      "language": "python",
+      "explanation": [
+        "바깥 dict comprehension은 설정 이름을 결과의 키로 사용합니다. 그래서 careful과 fast 결과를 섞지 않고 비교할 수 있습니다.",
+        "안쪽 list comprehension은 각 분할 작업을 기존 run_once에 넘깁니다. 새 구조는 분배만 맡고 실제 작업 규칙은 첫 단계의 함수가 계속 담당합니다."
+      ],
+      "inputs": ["job: 실행할 원래 작업", "configs: 선택한 워커 설정 튜플"],
+      "outputs": ["설정 이름별 완료 문자열 목록을 가진 dict"],
+      "question": {
+        "prompt": "run_all(\"report\", WORKERS)[\"fast\"]에는 완료 문자열이 몇 개 들어갈까요?",
+        "hint": "fast 설정의 parallelism 값을 보고 split_job의 목록 길이를 따라가세요.",
+        "answer": "세 개입니다. fast는 parallelism이 3이고, 각각 report [part 1]부터 report [part 3]을 run_once로 처리합니다.",
+        "transfer": "같은 입력을 서로 다른 정책으로 실행할 때, 결과를 정책 이름으로 묶으면 비교와 오류 확인이 쉬워지는지 생각해 보세요."
+      }
+    },
+    {
+      "id": "choose-one-config",
+      "title": "한 설정만 골라 호출한다",
+      "source": {"path": "examples/worker_demo.py", "line": 27, "end_line": 28},
+      "code": "fast = next(config for config in WORKERS if config.name == \"fast\")\nprint(run_all(\"report\", (fast,)))",
+      "language": "python",
+      "explanation": [
+        "next는 이름이 fast인 설정 하나를 찾아냅니다. 예시는 선택 조건을 코드에 보이게 두어 어떤 실행 계획을 썼는지 분명하게 합니다.",
+        "run_all에는 하나의 설정만 담은 튜플을 넘깁니다. 끝의 쉼표가 없으면 튜플이 아니라 WorkerConfig 하나가 되어 반복 가능한 configs 계약과 맞지 않습니다."
+      ],
+      "inputs": ["WORKERS: 이전 단계에서 만든 설정 튜플", "report: 실행할 작업 이름"],
+      "outputs": ["fast 키 아래에 세 완료 결과가 든 dict의 출력"],
+      "question": {
+        "prompt": "(fast) 대신 (fast,)를 넘기지 않으면 run_all 안에서는 무엇이 문제될까요?",
+        "hint": "괄호만으로는 한 항목 튜플이 되지 않습니다.",
+        "answer": "WorkerConfig 자체를 configs로 넘기게 되고, for config in configs에서 WorkerConfig는 반복할 수 없으므로 TypeError가 납니다.",
+        "transfer": "한 항목 컬렉션을 API에 넘기는 호출에서, 언어의 문법이 정말 컬렉션을 만드는지 작은 REPL 예시로 확인해 보세요."
+      }
+    }
+  ]
+}
